@@ -1,35 +1,86 @@
 #include <ESP8266WiFi.h>
+
+/*------------------------------
+ * FASTLED 
+ -----------------------------*/
+ #include <bitswap.h>
+#include <chipsets.h>
+#include <color.h>
+#include <colorpalettes.h>
+#include <colorutils.h>
+#include <controller.h>
+#include <cpp_compat.h>
+#include <dmx.h>
+#include <FastLED.h>
+#include <fastled_config.h>
+#include <fastled_delay.h>
+#include <fastled_progmem.h>
+#include <fastpin.h>
+#include <fastspi.h>
+#include <fastspi_bitbang.h>
+#include <fastspi_dma.h>
+#include <fastspi_nop.h>
+#include <fastspi_ref.h>
+#include <fastspi_types.h>
+#include <hsv2rgb.h>
+#include <led_sysdefs.h>
+#include <lib8tion.h>
+#include <noise.h>
+#include <pixelset.h>
+#include <pixeltypes.h>
+#include <platforms.h>
+#include <power_mgt.h>
+#define DATA_PIN    5
+//#define CLK_PIN   4
+#define LED_TYPE    WS2812
+#define COLOR_ORDER RGB
+#define NUM_LEDS    300
+CRGB leds[NUM_LEDS];
+#define BRIGHTNESS          96
+#define FRAMES_PER_SECOND  60
+
+/*------------------------------
+ * Web Server
+ -----------------------------*/
+#include <ESP8266WebServer.h> //For web socket 
+#include <ArduinoJson.h> //For sending 
+ESP8266WebServer server(80);
+bool flashEnable = 0;
+int flashLoop = 0;
+int flashCount = 0;
+int flashRed = 0;
+int flashGreen = 0;
+int flashblue = 0;
+
+/*------------------------------
+ * OTA 
+ -----------------------------*/
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
-const char* ssid = "SSID";
-const char* password = "PASSWORD";
+const char* ssid = "ssid";
+const char* password = "password";
 
 void setup() {
+  /*------------------------------
+  * OTA and Serial
+  -----------------------------*/
   Serial.begin(115200);
   Serial.println("Booting");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
   while (WiFi.waitForConnectResult() != WL_CONNECTED) {
     Serial.println("Connection Failed! Rebooting...");
     delay(5000);
     ESP.restart();
   }
-
-  // Port defaults to 8266
-  // ArduinoOTA.setPort(8266);
-
-  // Hostname defaults to esp8266-[ChipID]
-   ArduinoOTA.setHostname("BinaryLEDS");
-
-  // No authentication by default
-  // ArduinoOTA.setPassword("admin");
-
-  // Password can be set with it's md5 value as well
-  // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
-  // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
-
+  ArduinoOTA.setPort(8266);
+  ArduinoOTA.setHostname("BinaryLEDS");
   ArduinoOTA.onStart([]() {
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
@@ -65,8 +116,71 @@ void setup() {
   Serial.println("Ready");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+  
+  /*------------------------------
+  * FASTLED
+  -----------------------------*/
+   // tell FastLED about the LED strip configuration
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+
+  // set master brightness control
+  FastLED.setBrightness(BRIGHTNESS);
+
+  /*------------------------------
+  * WEBSERVER
+  -----------------------------*/
+  server.on("/pew", handlePew);
+  server.begin();
+  Serial.println("HTTP server started");
 }
 
 void loop() {
+  //Enable Over-The-Air-Updates
   ArduinoOTA.handle();
+  //Wait for requests
+  server.handleClient();
+}
+
+void handlePew() {
+  //Turn on BuiltinLED
+  ledOn();
+  //Setup a JSON doc
+  StaticJsonDocument<200> jsonObj;
+  char JSONmessageBuffer[200];
+  
+  //Handle the LED Call 
+  uint8_t hue = 0;
+  for(int i = 1; i < NUM_LEDS; i++) {
+   // Set the i'th led to on 
+    leds[i] = CHSV(hue++, 255, 255);
+    // Set the i'th led to off
+    leds[i - 1] = CRGB::Black;
+    // Show the leds
+     FastLED.show(); 
+//    // now that we've shown the leds, reset the i'th led to black
+//    // leds[i] = CRGB::Black;
+//    fadeall();
+    // Wait a little bit before we loop around and do it again
+    delay(.2);
+  }
+
+  //Return response
+  jsonObj["length"] = 1;
+  jsonObj["direction"] = 1;
+  jsonObj["r"] = 1;
+  jsonObj["g"] = 1;
+  jsonObj["b"] = 1;
+  serializeJsonPretty(jsonObj, JSONmessageBuffer);
+  server.send(200, "application/json", JSONmessageBuffer);
+  ledOff();
+}
+
+void fadeall() { for(int i = 0; i < NUM_LEDS; i++) { leds[i].nscale8(250); } }
+
+void ledOn() {
+  digitalWrite(BUILTIN_LED, LOW);
+}
+
+void ledOff() {
+  digitalWrite(BUILTIN_LED, HIGH);
 }
